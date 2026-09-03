@@ -44,4 +44,4 @@ AIGFM_PEER_CAPTURE_PLUGINS=[]
 
 ## License
 
-AGPL-3.0
+MIT
