@@ -1,6 +1,6 @@
 # nonebot-plugin-aigfm-peer
 
-跨 bot 通信代理插件，安装到其它 bot 上，配合主插件 `nonebot-plugin-aigf-master` 使用。
+跨 bot 通信代理插件，安装到其它 bot 上，配合主插件 [nonebot-plugin-aigf-master](https://github.com/Funny1Potato/nonebot-plugin-aigf-master) 使用。
 
 ## 📖 介绍
 
