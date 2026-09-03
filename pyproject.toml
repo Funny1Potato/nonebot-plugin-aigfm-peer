@@ -6,9 +6,9 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10, <4.0"
 dependencies = [
-    "nonebot2>=2.5.0",
-    "nonebot-adapter-onebot>=2.4.6",
-    "httpx",
+    "nonebot2>=2.3.0",
+    "nonebot-adapter-onebot>=2.2.0",
+    "httpx>=0.24.0",
 ]
 
 [tool.nonebot]
