@@ -1,0 +1,14 @@
+[project]
+name = "nonebot-plugin-aigfm-peer"
+version = "0.1.0"
+description = "跨bot通信代理插件：捕获本bot插件输出推送给主bot，并支持远程插件调用"
+readme = "README.md"
+requires-python = ">=3.10, <4.0"
+dependencies = [
+    "nonebot2>=2.5.0",
+    "nonebot-adapter-onebot>=2.4.6",
+    "httpx",
+]
+
+[tool.nonebot]
+plugins = ["nonebot_plugin_aigfm_peer"]
