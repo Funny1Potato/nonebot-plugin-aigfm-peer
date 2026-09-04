@@ -26,16 +26,32 @@ __plugin_meta__ = PluginMetadata(
     usage="安装到其它 bot 后自动工作；配置 AIGFM_PEER_PUSH_PORT / AIGFM_PEER_TOKEN / AIGFM_PEER_BOT_NAME",
     type="application",
     config=PluginConfig, supported_adapters={"~onebot.v11"},
-    homepage="https://github.com/Funny1Potato/nonebot-plugin-aigf",
+    homepage="https://github.com/Funny1Potato/nonebot-plugin-aigfm-peer",
     extra={"author": "Funny1Potato"},
 )
 
 _invoke_tasks: set = set()
 _commands_cache: list[dict] = []
+_command_plugin_map: dict[str, str] = {}
+
+
+def _command_head(command: str) -> str:
+    """去掉命令前缀并取主命令名（用于调用核对）"""
+    command = command.strip()
+    try:
+        command_start = get_driver().config.command_start
+    except Exception:
+        command_start = set()
+    for prefix in sorted((p for p in command_start if p), key=len, reverse=True):
+        if command.startswith(prefix):
+            command = command[len(prefix):]
+            break
+    return command.split(None, 1)[0] if command else command
 
 
 def _scan_commands() -> list[dict]:
-    """扫描本 bot 已注册的 on_command 命令，供 Bot A 了解可用命令"""
+    """全量扫描本 bot 的 on_command 命令：填充 _command_plugin_map（核对用），返回 [{name, plugin, description}]"""
+    _command_plugin_map.clear()
     commands: list[dict] = []
     seen = set()
     for priority, matcher_list in matchers.items():
@@ -54,12 +70,18 @@ def _scan_commands() -> list[dict]:
                         if not name or name in seen:
                             continue
                         seen.add(name)
+                        plugin_name = matcher_cls.plugin_name or "unknown"
                         description = ""
                         if matcher_cls.plugin and hasattr(matcher_cls.plugin, "metadata"):
                             meta = matcher_cls.plugin.metadata
                             if meta:
                                 description = meta.description or ""
-                        commands.append({"name": name, "description": description})
+                        commands.append({"name": name, "plugin": plugin_name, "description": description})
+                        # 全量映射：主名 + 别名 → plugin，供调用核对
+                        _command_plugin_map[name] = plugin_name
+                        for cmd_tuple in cmd_rule.cmds[1:]:
+                            if cmd_tuple and cmd_tuple[0]:
+                                _command_plugin_map[cmd_tuple[0]] = plugin_name
                         break
             except Exception:
                 continue
@@ -236,9 +258,14 @@ async def _execute_command(bot, group_id: int, command: str, user_id: int = 0):
 
 @get_driver().on_startup
 async def _on_startup():
-    # 启动时扫描本 bot 已注册命令，随推送告知 Bot A
+    # 启动时全量扫描（填充核对 map），上报命令按白名单过滤（空白名单=不上报）
+    all_cmds = _scan_commands()
     _commands_cache.clear()
-    _commands_cache.extend(_scan_commands())
+    if plugin_config.aigfm_peer_capture_plugins:
+        _commands_cache.extend([
+            {"name": c["name"], "description": c["description"]}
+            for c in all_cmds if c["plugin"] in plugin_config.aigfm_peer_capture_plugins
+        ])
     logger.info(f"[PeerAgent] 扫描命令: {len(_commands_cache)} 个")
     if not plugin_config.aigfm_peer_token:
         logger.warning("[PeerAgent] 未配置 aigfm_peer_token，invoke 端点将拒绝所有请求")
@@ -264,6 +291,13 @@ async def _on_startup():
             if not command or not group_id:
                 return JSONResponse({"error": "missing command or group_id"}, status_code=400)
             logger.info(f"[PeerAgent] 收到调用: command={command}, group={group_id}, user_id={user_id}")
+            # 白名单核对：非空时，命令归属插件必须在白名单内，否则拒绝执行
+            if plugin_config.aigfm_peer_capture_plugins:
+                main = _command_head(command)
+                plugin = _command_plugin_map.get(main)
+                if plugin not in plugin_config.aigfm_peer_capture_plugins:
+                    logger.info(f"[PeerAgent] 拒绝: command={command}（插件 {plugin} 不在白名单）")
+                    return JSONResponse({"error": "plugin not allowed"}, status_code=403)
             try:
                 bot = get_bot()
             except ValueError:

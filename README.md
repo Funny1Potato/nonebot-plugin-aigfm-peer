@@ -6,7 +6,7 @@
 
 - **捕获输出并推送**：拦截本 bot 所有插件的输出（文本/图片），通过 HTTP 推送给主 bot（aigf-master），进入其 LLM 上下文（标注 `[bot名]`）
 - **远程插件调用**：提供 `/peer/invoke` 端点，接收主 bot 的远程命令调用，用 synthetic event 执行本 bot 的本地插件
-- **命令推送**：启动时扫描本 bot 已注册的 `on_command` 命令，随推送告知主 bot，让 LLM 了解可调用命令
+- **命令推送**：启动时扫描本 bot 已注册的 `on_command` 命令，随推送告知主 bot，让 LLM 了解可调用命令（受白名单控制）
 
 ## 💿 安装
 
@@ -32,7 +32,8 @@ AIGFM_PEER_PUSH_PORT=14514
 AIGFM_PEER_TOKEN="shared_secret"
 # 本 bot 名称（与主插件 AIGFM_PEER_BOTS 的 name 对应）
 AIGFM_PEER_BOT_NAME="botB"
-# 要捕获输出的插件名列表，为空则捕获所有
+# 插件白名单：捕获输出 + 命令上报 + 调用核对 共用
+# 非空=只捕获/上报这些插件的命令且只允许执行它们；空=捕获所有插件输出但不上报命令、调用不核对
 AIGFM_PEER_CAPTURE_PLUGINS=[]
 ```
 
