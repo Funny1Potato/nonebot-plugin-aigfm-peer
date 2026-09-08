@@ -5,9 +5,11 @@
 2. 提供 POST /peer/invoke 端点，接收 Bot A 的远程命令调用，用 synthetic event 执行本地插件
 """
 
+import asyncio
+import base64
 from datetime import datetime
 
-import asyncio
+import anyio
 import httpx
 from nonebot import Bot, get_bot, get_driver, logger
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment
@@ -129,14 +131,28 @@ def _parse_segments(message) -> list[dict]:
     return []
 
 
+def _file_uri_to_path(uri: str) -> str:
+    """file:///D:/a/b.png → D:/a/b.png；file:///tmp/a.png → /tmp/a.png"""
+    path = uri[len("file://"):]
+    if path.startswith("/") and len(path) > 3 and path[2] == ":":
+        path = path[1:]          # Windows 的 /D:/... 形式
+    return path
+
+
 def _extract_image_data(data: dict) -> dict:
-    """从图片段落的 data 中提取图片数据，处理 base64:// 前缀"""
+    """从图片段落的 data 中提取图片数据，处理 base64://、file:// 与 http(s) url 前缀"""
     file_value = data.get("file", "")
     url = data.get("url", "")
     b64 = data.get("base64", "")
 
     if file_value.startswith("base64://"):
         b64 = file_value[9:]
+        file_value = ""
+    elif file_value.startswith("file://"):
+        file_value = _file_uri_to_path(file_value)
+    elif file_value.startswith(("http://", "https://")) and not url:
+        # MessageSegment.image(url) 时 url 会被 OneBot 适配器放在 file 字段
+        url = file_value
         file_value = ""
 
     return {"type": "image", "url": url, "file": file_value, "base64": b64}
@@ -206,7 +222,17 @@ async def capture_outgoing(bot: Bot, api: str, data: dict):
         if seg["type"] == "text" and seg["text"]:
             await _push(source, group_id, text=seg["text"])
         elif seg["type"] == "image":
-            await _push(source, group_id, image_url=seg.get("url", ""), image_base64=seg.get("base64", ""))
+            image_url = seg.get("url", "")
+            image_base64 = seg.get("base64", "")
+            # 本地文件图片（MessageSegment.image(Path) → file:// 路径）：
+            # 本机与插件同进程，直接读文件转 base64 推送，否则 Bot A 收不到图
+            if not image_url and not image_base64 and seg.get("file"):
+                try:
+                    async with await anyio.open_file(seg["file"], "rb") as f:
+                        image_base64 = base64.b64encode(await f.read()).decode()
+                except Exception as e:
+                    logger.error(f"[PeerAgent] 本地图片读取失败: {e}")
+            await _push(source, group_id, image_url=image_url, image_base64=image_base64)
 
 
 # ========== synthetic event 执行（从 aigf_manager plugin_invoker 抽取） ==========
