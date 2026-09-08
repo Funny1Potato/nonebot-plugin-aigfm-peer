@@ -43,6 +43,19 @@ AIGFM_PEER_CAPTURE_PLUGINS=[]
 2. 两端 token 必须一致
 3. 主插件与 peer 插件的前缀（`COMMAND_START`）各自独立配置，远程调用时按各 bot 的前缀自动适配
 
+## 可捕获的消息类型
+
+peer 会拦截本 bot 插件的 `send_msg` / `send_group_msg` / `send_private_msg`，捕获以下消息类型并推送给主 bot：
+
+| 类型 | 推送方式 |
+|------|---------|
+| 文本 | `text` 字段 |
+| 图片（`url` 字段，或 `file` 字段为 `http://` / `https://`） | 以 url 形式推送（`image_url`） |
+| 图片（`base64://` 前缀或 `base64` 字段） | 直接 base64 推送（`image_base64`） |
+| 图片（`file://` 本地路径，如 `MessageSegment.image(Path(...))`） | 本地读取文件转 base64 后推送（`image_base64`） |
+
+> 受 `AIGFM_PEER_CAPTURE_PLUGINS` 白名单过滤；主 bot 侧再按 `AIGFM_CAPTURE_IMAGES` 决定是否对图片做 VLM 描述。
+
 ## License
 
 MIT
