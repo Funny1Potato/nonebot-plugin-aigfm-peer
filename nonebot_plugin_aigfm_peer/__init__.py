@@ -306,9 +306,10 @@ def _create_synthetic_event(bot, group_id: int, command: str, user_id: int = 0,
         if ptype == "at" and part.get("target"):
             message.append(MessageSegment.text(" "))
             message.append(MessageSegment.at(int(part["target"])))
-        elif ptype == "text" and part.get("content"):
+        elif ptype == "text" and (part.get("content") or "").strip():
+            # 与 Bot A 同一规则：条目之间只插一个空格，文本段首尾空白去掉，避免双空格破坏参数解析
             message.append(MessageSegment.text(" "))
-            message.append(MessageSegment.text(str(part["content"])))
+            message.append(MessageSegment.text(str(part["content"]).strip()))
     now = datetime.now()
     return GroupMessageEvent(
         time=int(now.timestamp()),
