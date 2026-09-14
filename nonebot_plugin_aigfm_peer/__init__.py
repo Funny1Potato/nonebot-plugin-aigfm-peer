@@ -293,16 +293,22 @@ def _apply_command_prefix(command: str) -> str:
 
 
 def _create_synthetic_event(bot, group_id: int, command: str, user_id: int = 0,
-                            at_qq: int = 0) -> GroupMessageEvent:
-    """创建模拟的群消息事件"""
+                            parts: list | None = None) -> GroupMessageEvent:
+    """创建模拟的群消息事件（参数段与 Bot A 的回复/调用同结构，条目之间空格分隔）"""
     # LLM 传无前缀命令，这里按本 bot 配置的命令前缀补充
     command = _apply_command_prefix(command)
 
-    # 需要 @ 群友时，at 段放在命令文本之后（on_command 匹配命令头不受影响）
-    if at_qq:
-        message = Message([MessageSegment.text(command), MessageSegment.at(at_qq)])
-    else:
-        message = Message(MessageSegment.text(command))
+    message = Message(MessageSegment.text(command))
+    for part in parts or []:
+        if not isinstance(part, dict):
+            continue
+        ptype = part.get("type")
+        if ptype == "at" and part.get("target"):
+            message.append(MessageSegment.text(" "))
+            message.append(MessageSegment.at(int(part["target"])))
+        elif ptype == "text" and part.get("content"):
+            message.append(MessageSegment.text(" "))
+            message.append(MessageSegment.text(str(part["content"])))
     now = datetime.now()
     return GroupMessageEvent(
         time=int(now.timestamp()),
@@ -320,10 +326,14 @@ def _create_synthetic_event(bot, group_id: int, command: str, user_id: int = 0,
     )
 
 
-async def _execute_command(bot, group_id: int, command: str, user_id: int = 0, at_qq: int = 0):
+async def _execute_command(bot, group_id: int, command: str, user_id: int = 0,
+                           parts: list | None = None, at_qq: int = 0):
     """执行插件命令，插件响应由 capture_outgoing 钩子自动推送"""
-    logger.debug(f"[PeerAgent] 执行远程命令: command={command}, group={group_id}, user={user_id}, at={at_qq}")
-    event = _create_synthetic_event(bot, group_id, command, user_id, at_qq)
+    logger.debug(f"[PeerAgent] 执行远程命令: command={command}, group={group_id}, user={user_id}, parts={parts}, at={at_qq}")
+    # 未升级的 Bot A 只传 at_user_id：退化为单个 at 段（与旧行为一致）
+    if not parts and at_qq:
+        parts = [{"type": "at", "target": at_qq}]
+    event = _create_synthetic_event(bot, group_id, command, user_id, parts)
     await handle_event(bot, event)
 
 
@@ -362,9 +372,14 @@ async def _on_startup():
             group_id = data.get("group_id")
             user_id = data.get("user_id", 0)
             at_user_id = data.get("at_user_id", 0) or 0
+            parts = data.get("parts") or []
             if not command or not group_id:
                 return JSONResponse({"error": "missing command or group_id"}, status_code=400)
-            logger.info(f"[PeerAgent] 收到调用: command={command}, group={group_id}, user_id={user_id}, at={at_user_id}")
+            logger.info(f"[PeerAgent] 收到调用: command={command}, group={group_id}, user_id={user_id}, parts={parts}, at={at_user_id}")
+            try:
+                at_uid = int(at_user_id)
+            except (TypeError, ValueError):
+                at_uid = 0
             # 白名单核对：非空时，命令归属插件必须在白名单内，否则拒绝执行
             if plugin_config.aigfm_peer_capture_plugins:
                 main = _command_head(command)
@@ -378,7 +393,9 @@ async def _on_startup():
                 return JSONResponse({"error": "no bot"}, status_code=500)
             # 后台执行插件命令，立即返回（响应由 capture_outgoing 钩子异步推回 Bot A）
             try:
-                task = asyncio.create_task(_execute_command(bot, int(group_id), command, int(user_id or 0), int(at_user_id)))
+                task = asyncio.create_task(_execute_command(
+                    bot, int(group_id), command, int(user_id or 0),
+                    parts=parts, at_qq=at_uid))
                 _invoke_tasks.add(task)
                 task.add_done_callback(_invoke_tasks.discard)
             except Exception as e:
