@@ -4,13 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nonebot-plugin-aigfm-peer"
-version = "0.3.1"
-description = "跨bot通信代理插件：捕获本bot插件输出推送给主bot，并支持远程插件调用"
+version = "0.4.0"
+description = "跨bot通信代理插件：捕获本bot插件输出推送给主bot，并支持远程插件调用（跨适配器）"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10, <4.0"
 dependencies = [
-    "nonebot2>=2.3.0",
+    "nonebot2>=2.5.0",
+    "nonebot-plugin-alconna>=0.62",
+    "nonebot-plugin-uninfo>=0.11",
     "nonebot-adapter-onebot>=2.2.0",
     "httpx>=0.24.0",
 ]
