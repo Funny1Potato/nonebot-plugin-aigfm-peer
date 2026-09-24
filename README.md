@@ -19,8 +19,15 @@
 
 ## 💿 安装
 
+`0.4.0b0` 是**预发布（pre-release）版本**，因此：
+
+- `pip install nonebot-plugin-aigfm-peer` 装的仍是稳定版 **0.3.x**
+- `nb plugin install nonebot-plugin-aigfm-peer` 同样只装稳定版，而且 nb-cli **不支持指定版本**，所以 beta 只能用 pip 装
+
+要装 beta，**必须显式写出版本号**：
+
 ```bash
-pip install nonebot-plugin-aigfm-peer
+pip install nonebot-plugin-aigfm-peer==0.4.0b0
 ```
 
 在 `pyproject.toml` 中添加：
@@ -31,6 +38,9 @@ plugins = ["nonebot-plugin-aigfm-peer"]
 ```
 
 从 0.4 起还会自动装上 `nonebot-plugin-alconna` 与 `nonebot-plugin-uninfo`。
+
+> 需要装 beta 分支上尚未发版的改动时，可以直接从分支安装：
+> `pip install git+https://github.com/Funny1Potato/nonebot-plugin-aigfm-peer.git@beta`
 
 ## 配置
 
