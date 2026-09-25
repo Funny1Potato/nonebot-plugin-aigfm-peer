@@ -94,7 +94,7 @@ AIGFM_PEER_CAPTURE_PLUGINS=[]
 | Minecraft（仅私聊） | ✅ | ✅ | ✅ | ✅ |
 | WXMP（仅私聊） | ✅ | ✅ | ✅ | ✅ |
 | EFChat | ✅ | ✅ | ✅ | ✅ |
-| YunHu / bilibili Live | ❌ 适配器包在 Python 3.10 上无法导入（库侧限制，同主插件说明） | | | |
+| YunHu / bilibili Live | ⚠ 需 Python ≥3.12（3.10 下包无法导入；已在 3.14 验证可导入且 alconna/uninfo 实现齐备，同主插件说明） | | | |
 
 > **⚠ Satori / Kaiheila**：事件结构特殊（Satori 的 `message` 是 `{id, content}` 结构体、Kaiheila 的消息在嵌套 `event` 里），离线未能构造出"uninfo 与 alconna 都认可"的事件，因此远程调用这条**未验证通过**（捕获/推送/上报已通过）。真机使用请以实际表现为准。
 > **Kook 注意**：请安装 `nonebot-adapter-kaiheila`（社区包 `nonebot-adapter-kook` 的模块名与 alconna/uninfo 期望的不一致，会等同于不支持）。
