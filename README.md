@@ -71,6 +71,35 @@ AIGFM_PEER_CAPTURE_PLUGINS=[]
 - **远程调用**：按主 bot 传的 `session` 找到本侧记住的真实事件，`model_copy` 换消息体后分发（发送者、适配器字段都来自那条真实消息）。**没有可复制事件时**：OneBot V11 用手搓群事件兜底（老行为），其它适配器则记一条告警后跳过（不会假装执行成功）
 - **本项目自身的边界**：两个 bot 之间的 HTTP 通道与 `session` 互通需要主插件 2.0.0-beta+；主插件的群系统通知（戳一戳/禁言等）仍是 OneBot 专属
 
+### 功能 × 适配器支持表（2026-09-25 实测）
+
+测试方式同主插件：为每个适配器构造真实事件，跑捕获 → 推送 payload → 命令上报 → 远程调用（`probe_cmd` 由本侧真实响应器接收）全链路，bot 为记录型 mock，未连真实平台。
+
+| 适配器 | 捕获本机插件输出 | 推送到主 bot | 命令扫描/上报 | 远程调用执行 |
+|---|---|---|---|---|
+| OneBot V11 | ✅ | ✅ | ✅ | ✅ |
+| OneBot V12 | ✅ | ✅ | ✅ | ✅ |
+| Console | ✅ | ✅ | ✅ | ✅ |
+| Satori | ✅ | ✅ | ✅ | ⚠ 见下 |
+| Telegram | ✅ | ✅ | ✅ | ✅ |
+| Discord | ✅ | ✅ | ✅ | ✅ |
+| QQ（频道/C2C/群） | ✅ | ✅ | ✅ | ✅ |
+| Feishu | ✅ | ✅ | ✅ | ✅ |
+| Milky | ✅ | ✅ | ✅ | ✅ |
+| Mirai | ✅ | ✅ | ✅ | ✅ |
+| Kaiheila（Kook） | ✅ | ✅ | ✅ | ⚠ 见下 |
+| DoDo | ✅ | ✅ | ✅ | ✅ |
+| Kritor | ✅ | ✅ | ✅ | ✅ |
+| Mail（仅私聊） | ✅ | ✅ | ✅ | ✅ |
+| Minecraft（仅私聊） | ✅ | ✅ | ✅ | ✅ |
+| WXMP（仅私聊） | ✅ | ✅ | ✅ | ✅ |
+| EFChat | ✅ | ✅ | ✅ | ✅ |
+| YunHu / bilibili Live | ❌ 适配器包在 Python 3.10 上无法导入（库侧限制，同主插件说明） | | | |
+
+> **⚠ Satori / Kaiheila**：事件结构特殊（Satori 的 `message` 是 `{id, content}` 结构体、Kaiheila 的消息在嵌套 `event` 里），离线未能构造出"uninfo 与 alconna 都认可"的事件，因此远程调用这条**未验证通过**（捕获/推送/上报已通过）。真机使用请以实际表现为准。
+> **Kook 注意**：请安装 `nonebot-adapter-kaiheila`（社区包 `nonebot-adapter-kook` 的模块名与 alconna/uninfo 期望的不一致，会等同于不支持）。
+> 捕获与远程调用都不依赖命令是哪种响应器写的：`on_command` 与 `on_alconna` 注册的命令都会出现在上报清单与调用核对里（主名与别名各一条）。
+
 ## 可捕获的消息类型
 
 peer 会拦截本 bot 插件的 `send_msg` / `send_group_msg` / `send_private_msg`（不同适配器的发送接口参数名不同，实际按「参数里带消息体」判断），捕获以下内容推送给主 bot：

@@ -13,6 +13,8 @@ import asyncio
 import base64
 import json
 import re
+from collections.abc import MutableMapping
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -631,6 +633,114 @@ def _refresh_uniseg_cache(event, bot) -> None:
             pass
 
 
+def _can_hold_message(template, message, expected_text: str) -> bool:
+    """事件的 `message` 字段能否直接放本适配器的 Message（实测；Satori 这类字段是结构体，不能放）
+
+    塞进副本后能取到非空 get_message() 就认，不行则改由 `_patch_text_fields` 替换文本字段。
+    """
+    try:
+        probe = template.model_copy(update={"message": message})
+        text = str(probe.get_message())
+    except Exception as e:
+        logger.debug(f"[PeerAgent] message 字段不接受统一消息，改用文本替换: {e}")
+        return False
+    if not text.strip():
+        return False
+    return expected_text.strip() in text or str(message) in text
+
+
+def _plain_incoming(bot, event) -> str:
+    """取事件里原来的纯文本（用 alconna 通用层，拿不到再退回适配器自己的实现；Satori 的会返回空串）"""
+    try:
+        unimsg = UniMessage.of(event.get_message(), bot=bot)
+        text = unimsg.extract_plain_text().strip()
+        if not text:
+            text = "".join(str(getattr(seg, "text", "") or "") for seg in unimsg).strip()
+        if text:
+            return text
+    except Exception as e:
+        logger.debug(f"[PeerAgent] 通用层取原文失败: {e}")
+    try:
+        return event.get_message().extract_plain_text().strip()
+    except Exception:
+        return ""
+
+
+def _is_patchable(value) -> bool:
+    """能继续往里找文本字段的容器：映射 / 列表 / pydantic 模型"""
+    return (isinstance(value, (MutableMapping, list))
+            or bool(getattr(type(value), "model_fields", None)))
+
+
+def _patch_text_fields(event, old_text: str, new_text: str) -> None:
+    """把事件里出现的旧消息文本替换成新文本（递归进嵌套模型/字典/列表，先复制再改）
+
+    部分适配器不把消息放在统一的 `message` 字段里（discord 用 content、dodo 用 message_body、
+    feishu 在嵌套的 event.event.message.content、**Satori 的 message 是 {id, content} 结构体**），
+    只换 `message` 的话目标插件 `get_message()` 读到的仍是原来那条消息，命令匹配不上。
+    """
+    if not old_text:
+        return
+
+    def visit(parent, name, value, depth: int, setter) -> None:
+        if isinstance(value, str):
+            if old_text in value:
+                try:
+                    setter(name, value.replace(old_text, new_text))
+                except Exception as e:
+                    logger.debug(f"[PeerAgent] 替换文本字段 {name} 失败: {e}")
+            return
+        if not _is_patchable(value):
+            return
+        if getattr(type(parent), "model_fields", None):
+            try:
+                copied = deepcopy(value)
+                setter(name, copied)
+                value = copied
+            except Exception:
+                pass
+        walk(value, depth + 1)
+
+    def walk(obj, depth: int = 0) -> None:
+        if depth > 4:
+            return
+        fields = list(getattr(type(obj), "model_fields", None) or [])
+        if fields:
+            for name in fields:
+                try:
+                    value = getattr(obj, name)
+                except Exception:
+                    continue
+                visit(obj, name, value, depth, lambda n, v, o=obj: setattr(o, n, v))
+        elif isinstance(obj, MutableMapping):
+            for name in list(obj.keys()):
+                visit(obj, name, obj.get(name), depth, lambda n, v: obj.__setitem__(n, v))
+        elif isinstance(obj, list):
+            for item in obj:
+                if _is_patchable(item):
+                    walk(item, depth + 1)
+
+    walk(event)
+
+
+def _reset_message_cache(event) -> None:
+    """清掉适配器「懒加载的消息缓存」私有属性（如 Discord 的 `_message` / `_original_message`）
+
+    Discord 的 `get_message()` 会把结果缓存在私有属性里，而 `model_copy` 会把这份缓存带过来；
+    不清理的话，即使换掉了消息体，目标插件读到的仍是原来那条消息，命令匹配不上。
+    """
+    for holder in (getattr(event, "__dict__", None), getattr(event, "__pydantic_private__", None)):
+        if not isinstance(holder, dict):
+            continue
+        stale = [k for k in holder
+                 if k.startswith("_") and not k.startswith("__") and "message" in k.lower()]
+        for key in stale:
+            try:
+                holder.pop(key, None)
+            except Exception as e:
+                logger.debug(f"[PeerAgent] 清理消息缓存 {key} 失败: {e}")
+
+
 async def _copy_event(bot: Bot, template, command: str, user_id=0,
                       parts: list | None = None, sender_name: str = ""):
     """复制该会话最近一条真实事件并换掉消息体（与 Bot A 的 plugin_invoker 同一做法）"""
@@ -638,11 +748,14 @@ async def _copy_event(bot: Bot, template, command: str, user_id=0,
     unimsg = _compose_unimsg(command, parts)
     message = await unimsg.export(bot=bot)
 
-    update: dict = {"message": message}
+    update: dict = {}
+    command_text = _plain_text(unimsg)
+    if _can_hold_message(template, message, command_text):
+        update["message"] = message
+        if hasattr(template, "original_message"):
+            update["original_message"] = message
     if hasattr(template, "raw_message"):
-        update["raw_message"] = _plain_text(unimsg)
-    if hasattr(template, "original_message"):
-        update["original_message"] = message
+        update["raw_message"] = command_text
     if hasattr(template, "reply"):
         update["reply"] = None
     if user_id not in (None, "", 0, "0"):
@@ -657,6 +770,9 @@ async def _copy_event(bot: Bot, template, command: str, user_id=0,
             except Exception as e:
                 logger.debug(f"[PeerAgent] 同步发送者信息失败: {e}")
     event = template.model_copy(update={**update, SYNTHETIC_FLAG: True})
+    # 消息文本不总在 `message` 字段里（见 _patch_text_fields），补齐后才对得上目标插件
+    _patch_text_fields(event, _plain_incoming(bot, template), _plain_text(unimsg))
+    _reset_message_cache(event)
     _refresh_uniseg_cache(event, bot)
     logger.debug(f"[PeerAgent] 复制真实事件: command={command}, user={user_id}, parts={parts}")
     return event
