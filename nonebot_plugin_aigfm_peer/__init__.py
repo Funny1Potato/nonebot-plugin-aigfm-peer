@@ -22,7 +22,7 @@ from nonebot import Bot, get_bot, get_driver, logger, require
 from nonebot.internal.matcher import current_event, current_matcher
 from nonebot.matcher import matchers
 from nonebot.message import event_preprocessor, handle_event
-from nonebot.plugin import PluginMetadata
+from nonebot.plugin import PluginMetadata, inherit_supported_adapters
 from nonebot.rule import CommandRule
 
 require("nonebot_plugin_alconna")
@@ -41,8 +41,12 @@ __plugin_meta__ = PluginMetadata(
     usage="安装到其它 bot 后自动工作；配置 AIGFM_PEER_PUSH_PORT / AIGFM_PEER_TOKEN / AIGFM_PEER_BOT_NAME",
     type="application",
     config=PluginConfig,
-    # 通用适配器支持：捕获与会话走 alconna/uninfo；仅「没有可复制事件时的兜底调用」需要 OneBot
-    supported_adapters=None,
+    # 捕获与会话走 alconna/uninfo，因此只声明两者共同支持的适配器
+    # （仅「没有可复制事件时的兜底调用」额外需要 OneBot，属可选能力）
+    supported_adapters=inherit_supported_adapters(
+        "nonebot_plugin_alconna",
+        "nonebot_plugin_uninfo",
+    ),
     homepage="https://github.com/Funny1Potato/nonebot-plugin-aigfm-peer",
     extra={"author": "Funny1Potato"},
 )
