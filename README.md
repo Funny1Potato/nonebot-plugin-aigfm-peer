@@ -97,8 +97,11 @@ AIGFM_PEER_CAPTURE_PLUGINS=[]
 | YunHu / bilibili Live | ✅⁴ | ✅⁴ | ✅⁴ | ✅⁴ |
 
 > **⚠️ Satori / Kaiheila**：事件结构特殊（Satori 的 `message` 是 `{id, content}` 结构体、Kaiheila 的消息在嵌套 `event` 里），离线未能构造出"uninfo 与 alconna 都认可"的事件，因此远程调用这条**未验证通过**（捕获/推送/上报已通过）。真机使用请以实际表现为准。
+
 > **Kook 注意**：请安装 `nonebot-adapter-kaiheila`（社区包 `nonebot-adapter-kook` 的模块名与 alconna/uninfo 期望的不一致，会等同于不支持）。
+
 > ⁴ **YunHu / bilibili Live 需要 Python ≥ 3.12**（`typing.TypedDict` 在 Python < 3.12 会被 pydantic 拒绝，YunHu 还用到 3.11+ 的 `typing.NotRequired`），3.10 的 bot 里这两个包导入即失败；上表这两行是 **Python 3.14.3** 下的实测结果（四项全通过）。
+
 > 捕获与远程调用都不依赖命令是哪种响应器写的：`on_command` 与 `on_alconna` 注册的命令都会出现在上报清单与调用核对里（主名与别名各一条）。
 
 ## 可捕获的消息类型
