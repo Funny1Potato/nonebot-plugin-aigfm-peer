@@ -15,6 +15,7 @@ import json
 import re
 from collections.abc import MutableMapping
 from copy import deepcopy
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -56,6 +57,7 @@ __plugin_meta__ = PluginMetadata(
 _invoke_tasks: set = set()
 _commands_cache: list[dict] = []
 _command_plugin_map: dict[str, str] = {}
+_request_context = ContextVar("aigfm_peer_request", default=None)
 
 SELF_PLUGIN_NAMES = ("nonebot_plugin_aigfm_peer", "nonebot-plugin-aigfm-peer")
 
@@ -127,7 +129,8 @@ async def _resolve_session(bot: Bot, event) -> _Session | None:
 def _session_from_api_data(bot: Bot, data: dict) -> _Session | None:
     """没有事件上下文时从 API 参数拼会话（群/频道优先，其次私聊）"""
     slug = _adapter_slug(bot.adapter.get_name())
-    chat_id = data.get("group_id") or data.get("channel_id") or data.get("chat_id")
+    chat_id = (data.get("group_id") if slug == "onebot11" else
+               data.get("group_id") or data.get("channel_id") or data.get("chat_id"))
     if chat_id:
         guild_id = data.get("guild_id")
         path = f"{guild_id}_{chat_id}" if guild_id else str(chat_id)
@@ -464,6 +467,9 @@ async def _push(plugin: str, session: _Session, text: str = "",
         "image_base64": image_base64,
         "commands": _commands_cache,
     }
+    context = _request_context.get()
+    if context and context[1] == session.key:
+        payload["request_id"] = context[0]
     headers = {"Authorization": f"Bearer {plugin_config.aigfm_peer_token}"}
     url = f"http://127.0.0.1:{plugin_config.aigfm_peer_push_port}/peer/capture"
     try:
@@ -501,6 +507,12 @@ async def capture_outgoing(bot: Bot, api: str, data: dict):
     if plugin_config.aigfm_peer_capture_plugins and source not in plugin_config.aigfm_peer_capture_plugins:
         return
 
+    # uninfo session resolution performs API queries. Ignore APIs without a
+    # message before resolving, otherwise query hooks can recursively re-enter.
+    message = _message_payload(bot, data)
+    if message is None:
+        return
+
     # 会话：优先当前事件（响应器上下文里一定有），回落 API 参数
     session = None
     try:
@@ -509,13 +521,13 @@ async def capture_outgoing(bot: Bot, api: str, data: dict):
         event = None
     if event is not None:
         session = await _resolve_session(bot, event)
+    api_session = _session_from_api_data(bot, data)
+    if api_session is not None and (session is None or session.native_chat_id != api_session.native_chat_id
+                                    or session.is_private != api_session.is_private):
+        # Preserve richer guild information for the same destination, but never
+        # attach an invocation ID to a proactive send to a different destination.
+        session = api_session
     if session is None:
-        session = _session_from_api_data(bot, data)
-    if session is None:
-        return
-
-    message = _message_payload(bot, data)
-    if message is None:
         return
 
     logger.debug(f"[PeerAgent] 捕获 outgoing: source={source}, session={session.key}, api={api}")
@@ -544,7 +556,7 @@ _MAX_TEMPLATES = 32
 @event_preprocessor
 async def _remember_event(bot: Bot, event, state):
     """按会话记住最近一条真实消息事件（不发 API 请求：用 alconna Target 推会话键）"""
-    if not callable(getattr(event, "get_message", None)):
+    if getattr(event, SYNTHETIC_FLAG, False) or not callable(getattr(event, "get_message", None)):
         return
     try:
         if event.get_type() != "message":
@@ -638,6 +650,11 @@ def _can_hold_message(template, message, expected_text: str) -> bool:
 
     塞进副本后能取到非空 get_message() 就认，不行则改由 `_patch_text_fields` 替换文本字段。
     """
+    if getattr(type(getattr(template, "message", None)), "model_fields", None):
+        return False
+    descriptor = getattr(type(template), "message", None)
+    if isinstance(descriptor, property) and descriptor.fset is None:
+        return False
     try:
         probe = template.model_copy(update={"message": message})
         text = str(probe.get_message())
@@ -672,7 +689,7 @@ def _is_patchable(value) -> bool:
             or bool(getattr(type(value), "model_fields", None)))
 
 
-def _patch_text_fields(event, old_text: str, new_text: str) -> None:
+def _patch_text_fields(event, old_text: str, new_text: str, message=None) -> None:
     """把事件里出现的旧消息文本替换成新文本（递归进嵌套模型/字典/列表，先复制再改）
 
     部分适配器不把消息放在统一的 `message` 字段里（discord 用 content、dodo 用 message_body、
@@ -683,6 +700,12 @@ def _patch_text_fields(event, old_text: str, new_text: str) -> None:
         return
 
     def visit(parent, name, value, depth: int, setter) -> None:
+        # Message containers (e.g. Kaiheila event.content) are authoritative,
+        # while a top-level message property may be read-only. Preserve segments.
+        if message is not None and isinstance(value, type(message)):
+            if old_text in value.extract_plain_text():
+                setter(name, deepcopy(message))
+                return
         if isinstance(value, str):
             if old_text in value:
                 try:
@@ -723,22 +746,24 @@ def _patch_text_fields(event, old_text: str, new_text: str) -> None:
     walk(event)
 
 
-def _reset_message_cache(event) -> None:
-    """清掉适配器「懒加载的消息缓存」私有属性（如 Discord 的 `_message` / `_original_message`）
+def _reset_message_cache(event, message=None) -> None:
+    """Refresh eager caches too: Satori stores _message in pydantic extras.
 
-    Discord 的 `get_message()` 会把结果缓存在私有属性里，而 `model_copy` 会把这份缓存带过来；
-    不清理的话，即使换掉了消息体，目标插件读到的仍是原来那条消息，命令匹配不上。
+    Deleting constructor-generated caches cannot rebuild them. When the new
+    native message is known, replace message caches with independent copies.
     """
-    for holder in (getattr(event, "__dict__", None), getattr(event, "__pydantic_private__", None)):
+    for holder in (getattr(event, "__dict__", None),
+                   getattr(event, "__pydantic_private__", None),
+                   getattr(event, "__pydantic_extra__", None)):
         if not isinstance(holder, dict):
             continue
         stale = [k for k in holder
                  if k.startswith("_") and not k.startswith("__") and "message" in k.lower()]
         for key in stale:
-            try:
+            if message is not None and key in ("_message", "_original_message"):
+                holder[key] = deepcopy(message)
+            else:
                 holder.pop(key, None)
-            except Exception as e:
-                logger.debug(f"[PeerAgent] 清理消息缓存 {key} 失败: {e}")
 
 
 async def _copy_event(bot: Bot, template, command: str, user_id=0,
@@ -752,8 +777,12 @@ async def _copy_event(bot: Bot, template, command: str, user_id=0,
     command_text = _plain_text(unimsg)
     if _can_hold_message(template, message, command_text):
         update["message"] = message
-        if hasattr(template, "original_message"):
-            update["original_message"] = message
+    else:
+        structured = getattr(template, "message", None)
+        if getattr(type(structured), "model_fields", None) and isinstance(getattr(structured, "content", None), str):
+            update["message"] = structured.model_copy(update={"content": str(message)})
+    if hasattr(template, "original_message"):
+        update["original_message"] = deepcopy(message)
     if hasattr(template, "raw_message"):
         update["raw_message"] = command_text
     if hasattr(template, "reply"):
@@ -771,8 +800,8 @@ async def _copy_event(bot: Bot, template, command: str, user_id=0,
                 logger.debug(f"[PeerAgent] 同步发送者信息失败: {e}")
     event = template.model_copy(update={**update, SYNTHETIC_FLAG: True})
     # 消息文本不总在 `message` 字段里（见 _patch_text_fields），补齐后才对得上目标插件
-    _patch_text_fields(event, _plain_incoming(bot, template), _plain_text(unimsg))
-    _reset_message_cache(event)
+    _patch_text_fields(event, _plain_incoming(bot, template), _plain_text(unimsg), message)
+    _reset_message_cache(event, message)
     _refresh_uniseg_cache(event, bot)
     logger.debug(f"[PeerAgent] 复制真实事件: command={command}, user={user_id}, parts={parts}")
     return event
@@ -818,12 +847,22 @@ def _create_synthetic_event(bot, group_id: int, command: str, user_id: int = 0,
         sender={"user_id": user_id,
                 "nickname": (sender_name or "").strip() or "aigf_user",
                 "role": "member"},
-    )
+    ).model_copy(update={SYNTHETIC_FLAG: True})
 
 
 async def _execute_command(bot, session_value: str, native_chat_id: int, command: str,
                            user_id: int = 0, parts: list | None = None, at_qq: int = 0,
-                           sender_name: str = ""):
+                           sender_name: str = "", request_id: str = ""):
+    token = _request_context.set((request_id, session_value) if request_id else None)
+    try:
+        await _execute_command_inner(bot, session_value, native_chat_id, command,
+                                     user_id, parts, at_qq, sender_name)
+    finally:
+        _request_context.reset(token)
+
+
+async def _execute_command_inner(bot, session_value, native_chat_id, command,
+                                 user_id=0, parts=None, at_qq=0, sender_name=""):
     """执行插件命令，插件响应由 capture_outgoing 钩子自动推送"""
     logger.debug(f"[PeerAgent] 执行远程命令: command={command}, session={session_value}, "
                  f"user={user_id}, parts={parts}, at={at_qq}, sender={sender_name}")
@@ -880,6 +919,9 @@ async def _on_startup():
             at_user_id = data.get("at_user_id", 0) or 0
             parts = data.get("parts") or []
             sender_name = data.get("name", "")
+            request_id = data.get("request_id", "")
+            if not isinstance(request_id, str) or len(request_id) > 64 or (request_id and not re.fullmatch(r"[A-Za-z0-9_-]+", request_id)):
+                return JSONResponse({"error": "invalid request_id"}, status_code=400)
             if not command:
                 return JSONResponse({"error": "missing command"}, status_code=400)
             if not session_value and not group_id:
@@ -912,13 +954,13 @@ async def _on_startup():
             try:
                 task = asyncio.create_task(_execute_command(
                     bot, session_value, native_chat_id, command, int(user_id or 0),
-                    parts=parts, at_qq=at_uid, sender_name=sender_name))
+                    parts=parts, at_qq=at_uid, sender_name=sender_name, request_id=request_id))
                 _invoke_tasks.add(task)
                 task.add_done_callback(_invoke_tasks.discard)
             except Exception as e:
                 logger.error(f"[PeerAgent] 命令执行失败: {e}")
                 return JSONResponse({"error": "execute failed"}, status_code=500)
-            return JSONResponse({"ok": True})
+            return JSONResponse({"ok": True, "request_id": request_id})
 
         logger.success(f"[PeerAgent] 启动完成 | 推送: {bool(plugin_config.aigfm_peer_push_port)} | bot 名: {plugin_config.aigfm_peer_bot_name}")
     except Exception as e:

@@ -69,9 +69,9 @@ AIGFM_PEER_CAPTURE_PLUGINS=[]
 
 - **捕获**：`Bot.on_calling_api` 是 NoneBot 基类钩子（所有适配器都会触发），消息体用 uniseg 解析（文本/图片/@/合并转发/小程序/XML，以及 onebot 的分享/位置/音乐/骰子/群文件等未映射段）。会话取自当前事件（uninfo 优先，回落 alconna Target），因此推送里的 `session` 是 `适配器:会话id`
 - **远程调用**：按主 bot 传的 `session` 找到本侧记住的真实事件，`model_copy` 换消息体后分发（发送者、适配器字段都来自那条真实消息）。**没有可复制事件时**：OneBot V11 用手搓群事件兜底（老行为），其它适配器则记一条告警后跳过（不会假装执行成功）
-- **本项目自身的边界**：两个 bot 之间的 HTTP 通道与 `session` 互通需要主插件 2.0.0-beta+；主插件的群系统通知（戳一戳/禁言等）仍是 OneBot 专属
+- **本项目自身的边界**：两个 bot 之间的 HTTP 通道与 `session` 互通需要主插件 2.0.0-beta+；主插件已提供跨适配器通知渲染，具体会话定位边界见主插件文档
 
-### 功能 × 适配器支持表（2026-09-25 实测）
+### 功能 × 适配器支持表（2026-09-25 基础矩阵；2026-11-12 补测复制调用）
 
 测试方式同主插件：为每个适配器构造真实事件，跑捕获 → 推送 payload → 命令上报 → 远程调用（`probe_cmd` 由本侧真实响应器接收）全链路，bot 为记录型 mock，未连真实平台。
 
@@ -80,14 +80,14 @@ AIGFM_PEER_CAPTURE_PLUGINS=[]
 | OneBot V11 | ✅ | ✅ | ✅ | ✅ |
 | OneBot V12 | ✅ | ✅ | ✅ | ✅ |
 | Console | ✅ | ✅ | ✅ | ✅ |
-| Satori | ✅ | ✅ | ✅ | ⚠️ 见下 |
+| Satori | ✅ | ✅ | ✅ | ✅（离线） |
 | Telegram | ✅ | ✅ | ✅ | ✅ |
 | Discord | ✅ | ✅ | ✅ | ✅ |
 | QQ（频道/C2C/群） | ✅ | ✅ | ✅ | ✅ |
 | Feishu | ✅ | ✅ | ✅ | ✅ |
 | Milky | ✅ | ✅ | ✅ | ✅ |
 | Mirai | ✅ | ✅ | ✅ | ✅ |
-| Kaiheila（Kook） | ✅ | ✅ | ✅ | ⚠️ 见下 |
+| Kaiheila（Kook） | ✅ | ✅ | ✅ | ✅（离线） |
 | DoDo | ✅ | ✅ | ✅ | ✅ |
 | Kritor | ✅ | ✅ | ✅ | ✅ |
 | Mail（仅私聊） | ✅ | ✅ | ✅ | ✅ |
@@ -96,7 +96,7 @@ AIGFM_PEER_CAPTURE_PLUGINS=[]
 | EFChat | ✅ | ✅ | ✅ | ✅ |
 | YunHu / bilibili Live | ✅⁴ | ✅⁴ | ✅⁴ | ✅⁴ |
 
-> **⚠️ Satori / Kaiheila**：事件结构特殊（Satori 的 `message` 是 `{id, content}` 结构体、Kaiheila 的消息在嵌套 `event` 里），离线未能构造出"uninfo 与 alconna 都认可"的事件，因此远程调用这条**未验证通过**（捕获/推送/上报已通过）。真机使用请以实际表现为准。
+> **Satori / Kaiheila**：2026-11-12 补测真实事件复制、消息缓存、@ 段与目标 alconna 响应器命中，均通过。改动包含于 beta 源码，尚未发版。后续已通过隔离双实例 HTTP 调用和输出回传联调；真实聊天平台尚未验证。
 
 > **Kook 注意**：请安装 `nonebot-adapter-kaiheila`（社区包 `nonebot-adapter-kook` 的模块名与 alconna/uninfo 期望的不一致，会等同于不支持）。
 
@@ -121,3 +121,16 @@ peer 会拦截本 bot 插件的 `send_msg` / `send_group_msg` / `send_private_ms
 ## License
 
 MIT
+
+## 开发与验证
+
+离线验证入口与环境要求见 [tests/README.md](tests/README.md)。
+
+
+### beta 源码中的请求关联与发布检查（尚未发版）
+
+`POST /peer/invoke` 可带可选 `request_id`（最多 64 位字母、数字、下划线或连字符）。接收回执回显编号，在该请求上下文产生的同会话输出会把编号带到 `/peer/capture`；并发请求及后台任务独立关联。无编号的旧请求仍兼容；普通主动输出不伪造编号。合成调用不覆盖真实事件模板。
+
+主实例可据此区分“已接收”“收到输出”和“等待输出超时”。捕获输出不代表插件完整执行或平台发送成功，等待超时不触发重发。主实例等待期限由 `AIGFM_PEER_OUTPUT_TIMEOUT` 配置，默认 60 秒。
+
+本仓库新增 `quality.yml`：Python 3.10 / 3.14 离线回归、wheel/sdist 源码及内容核对、tag/版本一致检查、独立干净安装与加载。`publish.yml` 必须等待质量门槛通过，并上传已核对的同一组构建产物。本地可使用 `tools/check_distribution.py`、`tools/check_clean_install.py` 复核；远端 CI 验证结果见 tests/BASELINE.md；本地通过与 GitHub Actions 通过分别记录。

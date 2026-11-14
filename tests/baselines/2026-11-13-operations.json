@@ -1,0 +1,67 @@
+{
+  "date": "2026-11-13",
+  "published": false,
+  "github_actions_executed": false,
+  "real_chat_platform": false,
+  "workflow_yaml_parsed": true,
+  "offline_py310": [
+    {
+      "suite": "v_distribution_test.py",
+      "status": "PASS"
+    },
+    {
+      "suite": "v_event_copy_test.py",
+      "status": "PASS"
+    },
+    {
+      "suite": "v_peer_ma_test.py",
+      "status": "PASS"
+    },
+    {
+      "suite": "v_request_context_test.py",
+      "status": "PASS"
+    }
+  ],
+  "runtime_py314": [
+    {
+      "suite": "v_distribution_test.py",
+      "status": "PASS"
+    },
+    {
+      "suite": "v_event_copy_test.py",
+      "status": "PASS"
+    },
+    {
+      "suite": "v_peer_ma_test.py",
+      "status": "PASS"
+    },
+    {
+      "suite": "v_request_context_test.py",
+      "status": "PASS"
+    }
+  ],
+  "clean_install": [
+    {
+      "artifact": "nonebot_plugin_aigfm_peer-0.4.0b1-py3-none-any.whl",
+      "status": "passed"
+    },
+    {
+      "artifact": "nonebot_plugin_aigfm_peer-0.4.0b1.tar.gz",
+      "status": "passed"
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "nonebot_plugin_aigfm_peer-0.4.0b1-py3-none-any.whl",
+      "sha256": "5d552f3d0f4dc0a6af11feae5f4960c123ddf4f9bff3c1f0c6eb6702df649a64"
+    },
+    {
+      "name": "nonebot_plugin_aigfm_peer-0.4.0b1.tar.gz",
+      "sha256": "a2d8734d95ecdbae3ec00fe0768fa6c80f271000b4a1ab13e567bf5db0659b90"
+    }
+  ],
+  "source_sha256": {
+    "nonebot_plugin_aigfm_peer/config.py": "65c5b42d8d8272581d17dcdd13e3adaaf86aa49ca5173f5c22f9153413f091b0",
+    "nonebot_plugin_aigfm_peer/__init__.py": "63b64f299f97e24a939e35a0130421c9eadd6e1c0b91f18976370a201d7a9e54"
+  }
+}

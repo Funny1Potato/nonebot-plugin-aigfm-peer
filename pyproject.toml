@@ -19,3 +19,6 @@ dependencies = [
 
 [tool.nonebot]
 plugins = ["nonebot_plugin_aigfm_peer"]
+
+[tool.setuptools.packages.find]
+include = ["nonebot_plugin_aigfm_peer*"]
