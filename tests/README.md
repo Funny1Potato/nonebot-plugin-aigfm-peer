@@ -35,3 +35,5 @@ python tests/run_offline.py
 `v_distribution_test.py` 验证发布门槛会拒绝 tag/版本不符、缺失源码和混入私有数据。质量工作流还会实际构建 wheel/sdist 并分别在干净环境安装、检查依赖和加载插件。Python 3.10 需要测试依赖中的 tomli；干净安装工具为 `python tools/check_clean_install.py --dist dist`，结果保存在 tests/.results/install-*。
 
 `v_request_context_test.py` 覆盖并发请求、后台输出、跨会话主动发送、异常清理和合成事件保护。3.14 完整适配器依赖见 requirements-matrix.txt。
+
+2026-11-14 远端 Linux 验证已通过，见 [CI 记录](baselines/2026-11-14-ci.json) 与 [基线说明](BASELINE.md)。测试日志保留在 Actions 的 offline-3.10 / offline-3.14 产物中，构建包在 checked-distributions 中；历史产物有保留期限。
